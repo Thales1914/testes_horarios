@@ -10,14 +10,26 @@ import numpy as np
 import io
 import os
 from urllib.parse import urlparse
+import streamlit as st
+from dotenv import load_dotenv
 
-url = urlparse(os.getenv("DATABASE_URL"))
+# Carrega variáveis locais de um .env (quando rodar na máquina local)
+load_dotenv()
+
+# Prioriza o secrets do Streamlit Cloud; se não tiver, usa .env ou variáveis do sistema
+db_url = st.secrets.get("DATABASE_URL") or os.getenv("DATABASE_URL")
+
+if not db_url:
+    raise RuntimeError("DATABASE_URL não configurado nos secrets do Streamlit ou no ambiente local.")
+
+url = urlparse(db_url)
 
 DB_HOST = url.hostname
 DB_PORT = url.port
 DB_NAME = url.path[1:]
 DB_USER = url.username
 DB_PASS = url.password
+
 
 @contextmanager
 def get_db_connection():
@@ -30,7 +42,6 @@ def get_db_connection():
 
 
 def _extrair_numero_filial(filial_txt):
-
     if not filial_txt:
         return None
     texto = str(filial_txt).strip().lower()
@@ -39,8 +50,8 @@ def _extrair_numero_filial(filial_txt):
         return int(m.group())
     return None
 
-def get_horario_padrao(filial: int, evento: str) -> time:
 
+def get_horario_padrao(filial: int, evento: str) -> time:
     if filial == 2:
         return HORARIOS_FILIAL2.get(evento, time(0, 0))
     else:
@@ -49,6 +60,7 @@ def get_horario_padrao(filial: int, evento: str) -> time:
 
 def _hash_senha(senha: str) -> str:
     return hashlib.sha256(senha.encode('utf-8')).hexdigest()
+
 
 def init_db():
     with get_db_connection() as conn:
@@ -88,6 +100,7 @@ def init_db():
                 cursor.executemany("INSERT INTO funcionarios (cpf, codigo, nome, senha, role, empresa_id, cod_tipo, tipo, filial) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)", initial_users)
         conn.commit()
 
+
 def _obter_ou_criar_empresa_id(nome_empresa, cnpj, cursor):
     cursor.execute("SELECT id FROM empresas WHERE lower(nome_empresa) = lower(%s)", (nome_empresa,))
     resultado = cursor.fetchone()
@@ -98,14 +111,17 @@ def _obter_ou_criar_empresa_id(nome_empresa, cnpj, cursor):
         cursor.execute("INSERT INTO empresas (nome_empresa, cnpj) VALUES (%s, %s) RETURNING id", (nome_empresa, cnpj))
         return cursor.fetchone()[0]
 
+
 def ler_empresas():
     with get_db_connection() as conn:
         return pd.read_sql_query("SELECT id, nome_empresa, cnpj FROM empresas ORDER BY nome_empresa", conn)
+
 
 def ler_funcionarios_df():
     with get_db_connection() as conn:
         query = "SELECT f.codigo, f.nome, f.cpf, f.cod_tipo, f.tipo, f.filial, f.role, f.empresa_id, e.nome_empresa, e.cnpj FROM funcionarios f LEFT JOIN empresas e ON f.empresa_id = e.id"
         return pd.read_sql_query(query, conn)
+
 
 def verificar_login(cpf, senha_cod_forte):
     senha_hash = _hash_senha(senha_cod_forte)
