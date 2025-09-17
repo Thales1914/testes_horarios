@@ -11,12 +11,8 @@ import io
 import os
 from urllib.parse import urlparse
 import streamlit as st
-from dotenv import load_dotenv
 
-# Carrega variáveis locais de um .env (quando rodar na máquina local)
-load_dotenv()
-
-# Prioriza o secrets do Streamlit Cloud; se não tiver, usa .env ou variáveis do sistema
+# ✅ Tenta pegar do secrets do Streamlit; se não achar, pega do ambiente local (.env ou export)
 db_url = st.secrets.get("DATABASE_URL") or os.getenv("DATABASE_URL")
 
 if not db_url:
