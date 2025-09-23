@@ -3,7 +3,7 @@ import psycopg2
 import psycopg2.extras
 import pandas as pd
 from datetime import datetime, time
-from config import FUSO_HORARIO, TOLERANCIA_MINUTOS, HORARIOS_PADRAO, HORARIOS_FILIAL2
+from config import FUSO_HORARIO, TOLERANCIA_MINUTOS
 import hashlib
 from contextlib import contextmanager
 import numpy as np
@@ -12,7 +12,6 @@ import os
 from urllib.parse import urlparse
 import streamlit as st
 
-# ✅ Tenta pegar do secrets do Streamlit; se não achar, pega do ambiente local (.env ou export)
 db_url = st.secrets.get("DATABASE_URL") or os.getenv("DATABASE_URL")
 
 if not db_url:
@@ -47,11 +46,34 @@ def _extrair_numero_filial(filial_txt):
     return None
 
 
-def get_horario_padrao(filial: int, evento: str) -> time:
-    if filial == 2:
-        return HORARIOS_FILIAL2.get(evento, time(0, 0))
+def get_horario_padrao(filial: int, setor: str, evento: str) -> time:
+
+    setor = (setor or "").strip().lower()
+
+    cond_setor_1 = False
+    if setor in ["setor 1", "1", "01", "setor i", "i"]:
+        cond_setor_1 = True
     else:
-        return HORARIOS_PADRAO.get(evento, time(0, 0))
+        num_match = re.search(r'\d+', setor)
+        if num_match and int(num_match.group()) == 1:
+            cond_setor_1 = True
+
+    if cond_setor_1 or filial == 2:
+        horarios = {
+            "Entrada": time(8, 0),
+            "Saída Almoço": time(12, 0),
+            "Retorno Almoço": time(13, 0),
+            "Saída": time(18, 0)
+        }
+    else:
+        horarios = {
+            "Entrada": time(7, 30),
+            "Saída Almoço": time(11, 30),
+            "Retorno Almoço": time(12, 30),
+            "Saída": time(17, 30)
+        }
+
+    return horarios.get(evento, time(0, 0))
 
 
 def _hash_senha(senha: str) -> str:
@@ -128,6 +150,7 @@ def verificar_login(cpf, senha_cod_forte):
             user = cursor.fetchone()
     return (dict(user), None) if user else (None, "CPF ou Senha (Código Forte) inválidos.")
 
+
 def obter_proximo_evento(cpf):
     hoje_str = datetime.now(FUSO_HORARIO).strftime("%Y-%m-%d")
     with get_db_connection() as conn:
@@ -135,18 +158,9 @@ def obter_proximo_evento(cpf):
             cursor.execute("SELECT COUNT(*) FROM registros WHERE cpf_funcionario = %s AND data = %s", (cpf, hoje_str))
             num_pontos = cursor.fetchone()[0]
 
-    # buscar filial
-    with get_db_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute("SELECT filial FROM funcionarios WHERE cpf = %s", (cpf,))
-            filial_txt = cursor.fetchone()
-
-    filial_val = filial_txt[0] if filial_txt else None
-    filial_num = _extrair_numero_filial(filial_val)
-
     eventos = ["Entrada", "Saída Almoço", "Retorno Almoço", "Saída"]
-
     return eventos[num_pontos] if num_pontos < len(eventos) else "Jornada Finalizada"
+
 
 def bater_ponto(cpf, nome):
     agora = datetime.now(FUSO_HORARIO)
@@ -156,12 +170,13 @@ def bater_ponto(cpf, nome):
 
     with get_db_connection() as conn:
         with conn.cursor() as cursor:
-            cursor.execute("SELECT filial FROM funcionarios WHERE cpf = %s", (cpf,))
+            cursor.execute("SELECT filial, tipo FROM funcionarios WHERE cpf = %s", (cpf,))
             resultado = cursor.fetchone()
     filial_val = resultado[0] if resultado else None
+    setor_val = resultado[1] if resultado else None
     filial_num = _extrair_numero_filial(filial_val)
 
-    hora_prevista = get_horario_padrao(filial_num, proximo_evento)
+    hora_prevista = get_horario_padrao(filial_num, setor_val, proximo_evento)
     datetime_previsto = agora.replace(
         hour=hora_prevista.hour,
         minute=hora_prevista.minute,
@@ -217,11 +232,13 @@ def bater_ponto(cpf, nome):
         "success"
     )
 
+
 def ler_registros_df():
     with get_db_connection() as conn:
         query = "SELECT r.id, f.codigo, r.nome, r.data, r.hora, r.descricao, r.diferenca_min, r.observacao, e.nome_empresa, e.cnpj, f.tipo as setor, f.filial FROM registros r JOIN funcionarios f ON r.cpf_funcionario = f.cpf LEFT JOIN empresas e ON f.empresa_id = e.id"
         df = pd.read_sql_query(query, conn)
     return df.rename(columns={'id': 'ID', 'codigo': 'Código Forte', 'nome': 'Nome', 'data': 'Data', 'hora': 'Hora', 'descricao': 'Descrição', 'diferenca_min': 'Diferença (min)', 'observacao': 'Observação', 'nome_empresa': 'Empresa', 'cnpj': 'CNPJ', 'setor': 'Setor', 'filial': 'Filial'})
+
 
 def adicionar_funcionario(codigo, nome, nome_empresa, cnpj, cpf, cod_tipo, tipo, filial):
     if not all([codigo, nome, nome_empresa, cpf]):
@@ -240,8 +257,10 @@ def adicionar_funcionario(codigo, nome, nome_empresa, cnpj, cpf, cod_tipo, tipo,
                     (cpf, codigo, nome, senha_hash, 'employee', empresa_id, cod_tipo, tipo, filial)
                 )
             conn.commit()
-    except psycopg2.Error as e: return f"Erro no banco de dados: {e}", "error"
+    except psycopg2.Error as e: 
+        return f"Erro no banco de dados: {e}", "error"
     return f"Funcionário '{nome}' adicionado com sucesso!", "success"
+
 
 def _extrair_filial_do_texto(texto_arquivo):
     texto_lower = texto_arquivo.lower()
@@ -250,6 +269,7 @@ def _extrair_filial_do_texto(texto_arquivo):
     if "filial 03" in texto_lower or "filial 3" in texto_lower: return "Filial 03"
     if "filial 04" in texto_lower or "filial 4" in texto_lower: return "Filial 04"
     return "Não Identificada"
+
 
 def importar_funcionarios_em_massa(df_funcionarios):
     novos_funcionarios, erros, sucesso_count, ignorados_count = [], [], 0, 0
@@ -303,6 +323,7 @@ def importar_funcionarios_em_massa(df_funcionarios):
         
     return sucesso_count, ignorados_count, erros
 
+
 def excluir_funcionario(cpf):
     try:
         with get_db_connection() as conn:
@@ -314,12 +335,14 @@ def excluir_funcionario(cpf):
     except psycopg2.Error as e:
         return f"Erro no banco de dados ao excluir funcionário: {e}", "error"
 
+
 def _formatar_timedelta(td):
     if pd.isnull(td): return "00:00"
     total_seconds = int(td.total_seconds())
     hours, remainder = divmod(total_seconds, 3600)
     minutes, _ = divmod(remainder, 60)
     return f"{hours:02d}:{minutes:02d}"
+
 
 def gerar_relatorio_organizado_df(df_registros: pd.DataFrame) -> pd.DataFrame:
     if df_registros.empty:
@@ -378,6 +401,7 @@ def gerar_relatorio_organizado_df(df_registros: pd.DataFrame) -> pd.DataFrame:
     df_final['Data'] = pd.to_datetime(df_final['Data']).dt.strftime('%d/%m/%Y')
     return df_final
 
+
 def gerar_arquivo_excel(df_organizado, df_bruto, nome_empresa, cnpj, data_inicio, data_fim):
     output_buffer = io.BytesIO()
     periodo_str = f"{data_inicio.strftime('%d/%m/%Y')} a {data_fim.strftime('%d/%m/%Y')}"
@@ -428,6 +452,7 @@ def gerar_arquivo_excel(df_organizado, df_bruto, nome_empresa, cnpj, data_inicio
     output_buffer.seek(0)
     return output_buffer
 
+
 def atualizar_registro(id_registro, novo_horario=None, nova_observacao=None):
     try:
         with get_db_connection() as conn:
@@ -454,7 +479,7 @@ def atualizar_registro(id_registro, novo_horario=None, nova_observacao=None):
                         return "Formato de hora inválido. Use HH:MM:SS.", "error"
 
                     cursor.execute("""
-                        SELECT r.descricao, r.data, r.cpf_funcionario, f.filial
+                        SELECT r.descricao, r.data, r.cpf_funcionario, f.filial, f.tipo
                         FROM registros r
                         JOIN funcionarios f ON f.cpf = r.cpf_funcionario
                         WHERE r.id = %s
@@ -465,10 +490,10 @@ def atualizar_registro(id_registro, novo_horario=None, nova_observacao=None):
                         descricao = row['descricao']
                         data_str = row['data']
                         filial_tx = row['filial']
+                        setor_tx = row['tipo']
 
                         filial_num = _extrair_numero_filial(filial_tx)
-
-                        hora_prevista = get_horario_padrao(filial_num, descricao)
+                        hora_prevista = get_horario_padrao(filial_num, setor_tx, descricao)
 
                         dt_reg_dia = datetime.strptime(data_str, "%Y-%m-%d")
                         dt_previsto = dt_reg_dia.replace(

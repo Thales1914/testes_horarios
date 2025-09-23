@@ -62,7 +62,6 @@ def tela_de_login():
             st.image("assets/logo.png", width=350)
             st.text("")
 
-            # formulário (funciona com ENTER e clique do mouse)
             with st.form("login_form", clear_on_submit=False):
                 cpf = st.text_input("CPF", label_visibility="collapsed", placeholder="Seu CPF (usuário)")
                 senha = st.text_input("Sua Senha", type="password", label_visibility="collapsed", placeholder="Sua Senha (Código Forte)")
@@ -130,29 +129,31 @@ def tela_funcionario():
                 with st.container(border=True):
                     data_br = datetime.strptime(row['Data'], '%Y-%m-%d').strftime('%d/%m/%Y')
 
-                    diff = int(row['Diferença (min)']) if pd.notnull(row['Diferença (min)']) else 0
-                    cor_diff = "green" if diff == 0 else "red" if diff > 0 else "lightgray"
-
                     filial_num = _extrair_numero_filial(row.get('Filial'))
-
                     data_evento = datetime.strptime(row['Data'], '%Y-%m-%d').date()
                     hora_reg = datetime.strptime(row['Hora'], '%H:%M:%S').time()
                     dt_reg = datetime.combine(data_evento, hora_reg)
 
-                    hora_prevista = get_horario_padrao(filial_num, row['Descrição'])
+                    hora_prevista = get_horario_padrao(filial_num, row['Setor'], row['Descrição'])
                     dt_prevista = datetime.combine(data_evento, hora_prevista)
 
                     raw = round((dt_reg - dt_prevista).total_seconds() / 60)
+                    TOLERANCIA = 5
 
-                    if diff == 0:
-                        if raw < 0:
-                            texto_diff = f"Em ponto ({abs(raw)} min adiantado)"
+                    if abs(raw) <= TOLERANCIA:
+                        if raw == 0:
+                            texto_diff = "Em ponto"
                         elif raw > 0:
                             texto_diff = f"Em ponto ({raw} min atrasado)"
                         else:
-                            texto_diff = "Em ponto"
+                            texto_diff = f"Em ponto ({abs(raw)} min adiantado)"
+                        cor_diff = "green"
+                    elif raw > 0:
+                        texto_diff = f"Atrasado ({raw} min)"
+                        cor_diff = "red"
                     else:
-                        texto_diff = f"{'+' if diff > 0 else ''}{diff} min ({'atrasado' if diff > 0 else 'adiantado'})"
+                        texto_diff = f"Adiantado ({abs(raw)} min)"
+                        cor_diff = "orange"
 
                     col1, col2, col3, col4 = st.columns([3, 2, 2, 4])
                     col1.text(f"Evento: {row['Descrição']}")
@@ -279,28 +280,29 @@ def tela_admin():
                     data_br = row['Data_dt'].strftime('%d/%m/%Y')
 
                     filial_num = _extrair_numero_filial(row['Filial'])
-
                     data_evento = datetime.strptime(row['Data'], '%Y-%m-%d').date()
                     hora_reg = datetime.strptime(row['Hora'], '%H:%M:%S').time()
                     dt_reg = datetime.combine(data_evento, hora_reg)
 
-                    horario_padrao = get_horario_padrao(filial_num, row['Descrição'])
+                    horario_padrao = get_horario_padrao(filial_num, row['Setor'], row['Descrição'])
                     dt_pad = datetime.combine(data_evento, horario_padrao)
 
                     raw = round((dt_reg - dt_pad).total_seconds() / 60)
-
                     TOLERANCIA = 5
 
                     if abs(raw) <= TOLERANCIA:
-                        texto_diff = "Em ponto"
+                        if raw == 0:
+                            texto_diff = "Em ponto"
+                        elif raw > 0:
+                            texto_diff = f"Em ponto ({raw} min atrasado)"
+                        else:
+                            texto_diff = f"Em ponto ({abs(raw)} min adiantado)"
                         cor_diff = "green"
                     elif raw > 0:
-                        atraso_liquido = raw - TOLERANCIA
-                        texto_diff = f"Atrasado ({atraso_liquido} min)"
+                        texto_diff = f"Atrasado ({raw} min)"
                         cor_diff = "red"
                     else:
-                        adiantado_liquido = abs(raw) - TOLERANCIA
-                        texto_diff = f"Adiantado ({adiantado_liquido} min)"
+                        texto_diff = f"Adiantado ({abs(raw)} min)"
                         cor_diff = "orange"
 
                     col1, col2, col3, col4, col5, col6 = st.columns([2, 2, 2, 2, 3, 1])
