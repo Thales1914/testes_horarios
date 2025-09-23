@@ -61,8 +61,8 @@ def get_horario_padrao(filial: int, setor: str, evento: str) -> time:
     if cond_setor_1 or filial == 2:
         horarios = {
             "Entrada": time(8, 0),
-            "Saída Almoço": time(12, 0),
-            "Retorno Almoço": time(13, 0),
+            "Saída Almoço": time(11, 0),
+            "Retorno Almoço": time(12, 0),
             "Saída": time(18, 0)
         }
     else:
